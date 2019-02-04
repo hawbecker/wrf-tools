@@ -1,7 +1,5 @@
 '''
   What it does: Plots time-series data from WRF's tslist output 
-		
-
   Who made it: patrick.hawbecker@nrel.gov 
   When: 4/20/18
 '''
