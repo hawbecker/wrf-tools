@@ -1,6 +1,6 @@
 '''
-  What it does: This dictionary contains functions for reading
-                WRF (or netCDF) data.
+  What it does: This dictionary contains functions for reading,
+                manipulating, and probing WRF (or netCDF) files.
 
   Who made it: patrick.hawbecker@nrel.gov
   When: 5/11/18
@@ -13,6 +13,7 @@ import pickle
 import subprocess
 
 
+# Find the dimensions of the given WRF file
 def getdims(wrff):
     try:
         nx = wrff.dimensions['west_east'].size
@@ -32,6 +33,7 @@ def getdims(wrff):
         print 'No t-dimension'; nt = []
     return nt,nz,ny,nx
 
+# Get average (over all x,y) heights; staggered and unstaggered
 def getavgheight(wrff):
     nt = wrff.dimensions['Time'].size
     try:
@@ -54,6 +56,7 @@ def getavgheight(wrff):
         zs  = (z[:,1:] + z[:,:-1])*0.5
     return z,zs
 
+# Get heights for all x,y,z
 def getheight(wrff):
     try:
         nz = wrff.dimensions['bottom_top'].size
@@ -67,6 +70,7 @@ def getheight(wrff):
     zs  = (z[1:,:,:] + z[:-1,:,:])*0.5
     return z,zs
 
+# Get model height at a specific i,j
 def getheightloc(wrff,y,x):
     nt = wrff.dimensions['Time'].size
     try:
@@ -89,6 +93,7 @@ def getheightloc(wrff,y,x):
         zs  = (z[:,1:] + z[:,:-1])*0.5
     return z,zs
 
+# Return all files from a given directory starting with "fstr"
 def getwrffiles(fdir,fstr,returnFileNames=True):
     #fdir = file directory; fstr = file string structure (e.g. 'wrfout')
     nwrffs = subprocess.check_output('cd %s && ls %s*' % (fdir,fstr), shell=True).split()
@@ -98,13 +103,15 @@ def getwrffiles(fdir,fstr,returnFileNames=True):
     else:
         return nt
 
+# Return latitude and longitude
 def latlon(wrff):
     lat = wrff.variables['XLAT'][0,:,:]
     lon = wrff.variables['XLONG'][0,:,:]
     return lat,lon
 
 #=====================================#
-# - - - - - - TOWER STUFF - - - - - - #
+# - - - - - - TOWER DATA  - - - - - - #
+# Get the names and locations of all towers in directory (fdir)
 def gettowers(fdir,tstr):
     f = open('%s%s' % (fdir,tstr))
     nt = sum(1 for line in f)-3; f.close()
@@ -117,6 +124,7 @@ def gettowers(fdir,tstr):
         tij[0,tt] = line[2]; tij[1,tt] = line[3]
     return tname,tij
 
+# Get the i,j location of the given tower
 def twrlocij(twrf):
     twr = open(twrf,'r')
     header = twr.readline().replace('(',' ').replace(')',' ').replace(',',' ').split()
@@ -125,44 +133,49 @@ def twrlocij(twrf):
     stnj = int(header[7]) - 1
     return stni,stnj
 
+# Get the lat/lon location of the given tower
 def twrlocll(twrf):
     twr = open(twrf,'r')
     header = twr.readline().replace('(',' ').replace(')',' ').replace(',',' ').split()
     twr.close()
-    stni = float(header[9])
-    stnj = float(header[8])
-    return stnj,stni
+    stnlon = float(header[9])
+    stnlat = float(header[8])
+    return stnlat,stnlon
 
+# Tower class: put tower data into an object variable
 class tower():
     def __init__(self,fstr):
         self.fstr = fstr
         self.getvars()
         self.getdata()
-    def getvars(self):
+    def getvars(self): # find available vars
         varns = subprocess.check_output('ls %s*' % (self.fstr), shell=True).split() 
-        nvars = np.shape(varns)[0]
-        for vv in range(0,nvars):
+        nvars = np.shape(varns)[0] # Number of variables
+        for vv in range(0,nvars): # Loop over all variables
             varns[vv] = varns[vv].replace(self.fstr,'')
-        self.varns = varns
-        self.nvars = nvars
-    def getdata(self):
-        for vv in range(0,self.nvars):
-            if self.varns[vv] != 'TS':
+        self.varns = varns # variable names
+        self.nvars = nvars # number of variables
+    def getdata(self): # Get all the data
+        for vv in range(0,self.nvars): # Loop over all variables
+            if self.varns[vv] != 'TS': # TS is different structure...
+                # Get number of times
                 f = open('%s%s' % (self.fstr,self.varns[vv]))
                 nt = sum(1 for line in f)-1; f.close()
+                # Open again for reading
                 f = open('%s%s' % (self.fstr,self.varns[vv]))
-                self.header = f.readline().split()
-                for tt in np.arange(0,nt):
-                    line = f.readline().split()
-                    if tt == 0: 
+                self.header = f.readline().split() # Header information
+                for tt in np.arange(0,nt): # Loop over times
+                    line = f.readline().split() # reading one profile
+                    if tt == 0: # Initialize and get number of heights
                         nz = np.shape(line)[0]-1
                         var = np.zeros((nt,nz))
                         ttime = np.zeros((nt))
-                    var[tt,:] = line[1:]
+                    var[tt,:] = line[1:] # First element is time
                     ttime[tt] = np.float(line[0])
-                self.nt   = nt
-                self.time = ttime
-                self.nz = nz
+                self.nt   = nt # Number of times
+                self.time = ttime # time
+                self.nz = nz # Number of heights
+                # Set each of the variables to their own name
                 if self.varns[vv] == 'PH':
                     self.ph = var
                 elif self.varns[vv] == 'QV':
@@ -175,21 +188,24 @@ class tower():
                     self.vv = var
                 elif self.varns[vv] == 'WW':
                     self.ww = var
-            elif self.varns[vv] == 'TS':
-                f = open('%s%s' % (self.fstr,self.varns[vv]))
+            elif self.varns[vv] == 'TS': # Time series are surface variables
+                                         # (no height component)
+                f = open('%s%s' % (self.fstr,self.varns[vv])) # Number of times
                 nt = sum(1 for line in f)-1; f.close()
-                f = open('%s%s' % (self.fstr,self.varns[vv]))
-                f.readline()
-                for tt in np.arange(0,nt):
-                    line = f.readline().split()
-                    if tt == 0: 
+                f = open('%s%s' % (self.fstr,self.varns[vv])) # Open to get vars
+                f.readline() # Skip header
+                for tt in np.arange(0,nt): # Loop over all times
+                    line = f.readline().split() # One time, all surface variables
+                    if tt == 0: # Initialize number of variables
                         nv = np.shape(line)[0]-2
                         var = np.zeros((nt,nv))
                     var[tt,:] = line[2:]
-                self.ts = var
+                self.ts = var # Need to look up what tslist outputs to know which
+                              # vars are where...
 
 #=====================================#
 
+# Convert WRF times to year, month, day, hour
 def wrftimes2hours(wrff):
     nt = np.shape(wrff.variables['Times'][:])[0]
     if nt == 1:
@@ -213,12 +229,14 @@ def wrftimes2hours(wrff):
         hours = hour + minu/60.0 + sec/(60.0*60.0)
     return [year,month,day,hours]
 
+# Get i,j location from given wrf file and lat/long
 def latlon2ij(wrff,latoi,lonoi):
     lat,lon = latlon(wrff)
     dist    = ((lat-latoi)**2 + (lon-lonoi)**2)**0.5
     jj,ii   = np.where(dist==np.min(dist))
     return ii[0],jj[0]
 
+# Unstagger 2D variable on given axis
 def unstagger2d(var,ax):
     if ax == 0:
         varu = (var[:-1,:] + var[1:,:])/2.0
@@ -226,6 +244,7 @@ def unstagger2d(var,ax):
         varu = (var[:,:-1] + var[:,1:])/2.0
     return varu
 
+# Unstagger 3D variable on given axis
 def unstagger3d(var,ax):
     if ax == 0:
         varu = (var[:-1,:,:] + var[1:,:,:])/2.0
@@ -235,6 +254,7 @@ def unstagger3d(var,ax):
         varu = (var[:,:,:-1] + var[:,:,1:])/2.0
     return varu
 
+# Unstagger 4D variable on given axis
 def unstagger4d(var,ax):
     if ax == 1:
         varu = (var[:,:-1,:,:] + var[:,1:,:,:])/2.0

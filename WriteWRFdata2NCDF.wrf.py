@@ -1,59 +1,60 @@
 '''
-  What it does: Plots time-series data from WRF's tslist output 
+  What it does: Given a WRF file and a lat/lon pair, several surface
+                variables and profiles will be extracted and written
+                to a new file.
+
   Who made it: patrick.hawbecker@nrel.gov 
-  When: 4/20/18
+  When: 2/4/19
 '''
 import numpy as np
 import matplotlib.pyplot as plt
 from netCDF4 import Dataset as ncdf
-from matplotlib import cm
 import subprocess
-from matplotlib.colors import Normalize as Normalize
 import wrfdict as wrfdict
 
 # - - - - - - - - - - - - #
-stnlat = 45.638004;            stnlon = -120.642973
-fdir = '/projects/wfip/WFIP2/improved/extracted/'
-savedir = '/projects/wfip/'
-dom  = 1
+# User Settings:
+stnlat = 45.638004   # Latitude of interest
+stnlon = -120.642973 # Longitude of interest
+fdir = '/projects/wfip/WFIP2/improved/extracted/' # Location of WRF data
+dom  = 1 # WRF Domain of interest
+newfname = 'ExtractedWRFdataForWFIP2_d0%d.nc' % dom # New file name
+savedir = '/projects/wfip/' # Where to save new output
 # - - - - - - - - - - - - #
 
+# Find all wrfout_d0X files to loop over. Expects 1 time per file
 wrfoutf = subprocess.check_output('ls %swrfout_d0%d_*00' % (fdir,dom),shell=True).split()
-wrfoutf = wrfoutf
-nt = np.shape(wrfoutf)[0]
+nt = np.shape(wrfoutf)[0] # Number of times
 
-# Initialize time-series variables
+# Initialize time-series variables; 
+pblh  = np.zeros((nt)); ustr  = np.zeros((nt))
+u10   = np.zeros((nt)); v10   = np.zeros((nt))
+T2    = np.zeros((nt)); TH2   = np.zeros((nt))
+swdwn = np.zeros((nt)); psfc  = np.zeros((nt))
+time  = np.zeros((nt)); wdate = np.zeros((nt))
 hfx   = np.zeros((nt))
-pblh  = np.zeros((nt))
-ustr  = np.zeros((nt))
-u10   = np.zeros((nt))
-v10   = np.zeros((nt))
-T2    = np.zeros((nt))
-TH2   = np.zeros((nt))
-swdwn = np.zeros((nt))
-psfc  = np.zeros((nt))
-time  = np.zeros((nt))
-wdate = np.zeros((nt))
 
 # - - - WRF Data - - -
-cc = 0
-for ff in wrfoutf:
-    print ff
+cc = 0 # Start counter
+for ff in wrfoutf: # Loop over all WRF files
     wrfout     = ncdf(ff)
-    year,month,day,hour = wrfdict.wrftimes2hours(wrfout)
-    wdate[cc] = year*10000 + month*100 + day
+    year,month,day,hour = wrfdict.wrftimes2hours(wrfout) # Finds the WRF time
+    wdate[cc] = year*10000 + month*100 + day # Generates an integer in form YYYMMDD
     time[cc]  = hour
-    if cc == 0:
-        poii, poij = wrfdict.latlon2ij(wrfout,stnlat,stnlon)
-        z,zs = wrfdict.getheight(wrfout)
-        nz = np.shape(zs)[0]
-        height = zs[:,poij,poii]
+    if cc == 0: # Initialize 2D vars and gather necessary variables
+        poii, poij = wrfdict.latlon2ij(wrfout,stnlat,stnlon) # i,j location
+                                                # closest to given lat/lon
+        z,zs = wrfdict.getheightloc(wrfout,poij,poii) # Get z values at location
+        nz = np.shape(zs)[0] # number of heights
+        height = zs[:,poij,poii] # tower heights
+        # Initialize 2D variables
         u = np.zeros((nt,nz))
         v = np.zeros((nt,nz))
         w = np.zeros((nt,nz))
         T = np.zeros((nt,nz))
         P = np.zeros((nt,nz))
         Q = np.zeros((nt,nz))
+    # Load variables from WRF file
     hfx[cc]    = wrfout.variables['HFX'][0,poij,poii]
     pblh[cc]   = wrfout.variables['PBLH'][0,poij,poii]
     psfc[cc]   = wrfout.variables['PSFC'][0,poij,poii]
@@ -63,23 +64,32 @@ for ff in wrfoutf:
     T2[cc]     = wrfout.variables['T2'][0,poij,poii]
     TH2[cc]    = wrfout.variables['TH2'][0,poij,poii]
     swdwn[cc]  = wrfout.variables['SWDOWN'][0,poij,poii]
+    # U and V need to be interpolated to cell-center
     u[cc]      = wrfdict.unstagger2d(wrfout.variables['U'][0,:,poij,poii-1:poii+1],ax=1)[:,0]
     v[cc]      = wrfdict.unstagger2d(wrfout.variables['V'][0,:,poij-1:poij+1,poii],ax=1)[:,0]
+    # W needs to be unstaggered in the vertical direction
     ws         = wrfout.variables['W'][0,:,poij,poii]
     w[cc]      = (ws[1:] + ws[:-1])*0.5
+    # T is perturbation temp... need to add 300.0 K
     T[cc]      = wrfout.variables['T'][0,:,poij,poii]+300.0
+    # Pressure is perturbation + base
     P[cc]      = wrfout.variables['P'][0,:,poij,poii]+wrfout.variables['PB'][0,:,poij,poii]
+    # Mixing ratio of water vapor
     Q[cc]      = wrfout.variables['QVAPOR'][0,:,poij,poii]
 
-    cc += 1
-newncdf = ncdf('%sExtractedWRFdataForWFIP2.nc' % savedir,'w',format='NETCDF4_CLASSIC')
+    cc += 1 # increase counter
+# Write new NetCDF file
+newncdf = ncdf('%s%s' % (savedir,newfname),'w',format='NETCDF4_CLASSIC')
+# Create time and height dimensions
 newncdf.createDimension('NZ',nz)
 newncdf.createDimension('time',nt)
+# Set global values
 newncdf.location = '(%f, %f)' % (wrfout.variables['XLAT'][0,poij,poii], wrfout.variables['XLONG'][0,poij,poii])
 newncdf.elevation = '%f m' % wrfout.variables['HGT'][0,poij,poii]
 newncdf.description = \
         'Extracted by Patrick Hawbecker (patrick.hawbecker@nrel.gov) on Feb. 4, 2019 from wrfout files located at %s' % fdir
 
+# Create new variables
 times    = newncdf.createVariable('Time',np.float64, ('time',))
 dates    = newncdf.createVariable('Date',np.float64, ('time',))
 hgts     = newncdf.createVariable('Height',np.float64, ('NZ',))
@@ -98,6 +108,7 @@ wout     = newncdf.createVariable('W',np.float64, ('time','NZ',))
 Tout     = newncdf.createVariable('T',np.float64, ('time','NZ',))
 Pout     = newncdf.createVariable('P',np.float64, ('time','NZ',))
 Qout     = newncdf.createVariable('Q',np.float64, ('time','NZ',))
+# Assign data to new variables
 times[:]   = time
 dates[:]   = wdate
 hgts[:]    = height
@@ -116,12 +127,5 @@ wout[:]    = w
 Tout[:]    = T
 Pout[:]    = P
 Qout[:]    = Q
+# Write and close the new NetCDF file
 newncdf.close()
-print savedir
-#    wlat,wlon = wrfdict.latlon(wrfout)
-#    print poii,poij
-#    plt.pcolormesh(wlon,wlat,hgt,cmap=cm.terrain)
-#    plt.scatter(stnlon,stnlat,c='r',marker='x')
-#    plt.scatter(wlon[poij,poii],wlat[poij,poii],c='k',marker='d')
-#    plt.show()
-
